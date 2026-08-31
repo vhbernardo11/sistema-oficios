@@ -1,4 +1,4 @@
-name: Generate H3 Cat 10s
+name: Store LTX Cat 10s
 
 on:
   push:
@@ -10,124 +10,40 @@ permissions:
   contents: write
 
 jobs:
-  generate:
+  store-video:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - name: Generate short MiniMax H3 shots
+
+      - name: Download generated LTX-2.5 MP4
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p generated/clips
-          cat > /tmp/generate_h3_shots.py <<'PY'
-          import json, os, time, urllib.request, urllib.parse
-
-          BASE='https://multimodalart-minimax-h3.hf.space'
-          SEED=526831
-          COMMON='''An ultra realistic fluffy orange long-haired cat in the same warm rustic Italian kitchen, sitting at the same wooden table with the same freshly served ceramic plate of lasagna. Photorealistic natural feline anatomy, lifelike orange fur and whiskers, believable eyes, consistent body proportions, stable subject identity, realistic physics, warm golden practical lighting, authentic wooden textures, shallow depth of field, premium food cinematography, highly detailed pasta layers, rich tomato sauce, bubbling melted cheese and visible steam. Natural coherent movement, no extra limbs, no deformation, no flickering, no text, no watermark. Soundtrack: realistic cozy kitchen ambience, subtle ceramic plate sounds, soft eating sounds and quiet purring. Vertical 9:16.'''
-          ACTIONS=[
-            'Shot 1, medium close-up: the cat notices the lasagna, slowly leans forward and naturally sniffs the rising steam with curious subtle whisker movement. Slow cinematic camera push-in.',
-            'Shot 2, closer angle: the cat gently places one paw beside the plate and takes one careful small bite from the edge of the lasagna, moving naturally like a real cat.',
-            'Shot 3, premium food close-up: the cat takes another small bite while a short strand of melted cheese stretches naturally from the lasagna, detailed steam and sauce, realistic mouth movement.',
-            'Shot 4, intimate portrait angle: the cat chews subtly and calmly, blinks once, softly purrs, and looks satisfied while the steaming lasagna remains in the foreground.',
-            'Shot 5, final hero shot: the cat finishes eating, naturally licks its mouth once, looks content toward the plate and relaxes as the camera gently pushes closer.'
-          ]
-
-          def post_json(url,payload):
-              req=urllib.request.Request(url,data=json.dumps(payload).encode(),headers={'content-type':'application/json','accept':'application/json','user-agent':'Integrai-H3-Runner/2.0'},method='POST')
-              with urllib.request.urlopen(req,timeout=60) as r:return json.loads(r.read().decode())
-
-          def find_video(v):
-              if not v:return ''
-              if isinstance(v,str):
-                  if (v.startswith('https://') or v.startswith('http://')) and ('.mp4' in v or '.webm' in v):return v
-                  if v.startswith('/gradio_api/file='):return BASE+v
-                  if v.startswith('/tmp/') and v.endswith('.mp4'):return BASE+'/gradio_api/file='+v
-              elif isinstance(v,list):
-                  for x in v:
-                      u=find_video(x)
-                      if u:return u
-              elif isinstance(v,dict):
-                  for k in ('url','path','video','value','data'):
-                      if k in v:
-                          u=find_video(v[k])
-                          if u:return u
-                  for x in v.values():
-                      u=find_video(x)
-                      if u:return u
-              return ''
-
-          def generate(action,index,deadline_seconds=240):
-              prompt=COMMON+' '+action+' Duration about 2 seconds, smooth coherent motion.'
-              payload={'data':[prompt,None,None,'544x960 · 9:16 fast',2,10,SEED,False]}
-              sub=post_json(BASE+'/gradio_api/call/generate',payload)
-              eid=sub.get('event_id')
-              if not eid:raise RuntimeError('no event_id '+repr(sub))
-              print(f'clip {index}: event_id {eid}',flush=True)
-              url=BASE+'/gradio_api/call/generate/'+urllib.parse.quote(str(eid),safe='')
-              req=urllib.request.Request(url,headers={'accept':'text/event-stream','user-agent':'Integrai-H3-Runner/2.0'})
-              start=time.monotonic(); ev=''; lines=[]; completed=None
-              with urllib.request.urlopen(req,timeout=60) as r:
-                  while True:
-                      if time.monotonic()-start>deadline_seconds:raise TimeoutError(f'clip {index} queue timeout')
-                      raw=r.readline()
-                      if not raw:break
-                      line=raw.decode('utf-8',errors='replace').rstrip('\r\n')
-                      if line=='':
-                          data='\n'.join(lines).strip()
-                          if ev=='error':raise RuntimeError(data)
-                          if ev=='complete':
-                              try:completed=json.loads(data)
-                              except:completed=data
-                              break
-                          ev='';lines=[];continue
-                      if line.startswith('event:'):ev=line[6:].strip()
-                      elif line.startswith('data:'):lines.append(line[5:].strip())
-              if completed is None:raise RuntimeError('stream ended without complete')
-              video=find_video(completed)
-              if not video:raise RuntimeError('video URL not found: '+repr(completed)[:500])
-              out=f'generated/clips/clip_{index}.mp4'
-              req2=urllib.request.Request(video,headers={'user-agent':'Integrai-H3-Runner/2.0'})
-              with urllib.request.urlopen(req2,timeout=120) as src,open(out,'wb') as dst:
-                  while True:
-                      chunk=src.read(1024*1024)
-                      if not chunk:break
-                      dst.write(chunk)
-              if os.path.getsize(out)<10000:raise RuntimeError('output too small')
-              print(f'clip {index}: saved {os.path.getsize(out)} bytes',flush=True)
-              return out
-
-          clips=[]
-          for i,action in enumerate(ACTIONS,1):
-              try:clips.append(generate(action,i))
-              except Exception as e:print(f'clip {i} failed: {e}',flush=True)
-
-          if not clips:raise RuntimeError('No H3 clips were generated')
-          selected=[]
-          while len(selected)<5:selected.extend(clips)
-          selected=selected[:5]
-          with open('generated/concat.txt','w') as f:
-              for p in selected:f.write("file '"+os.path.abspath(p).replace("'","'\\''")+"'\n")
-          print('Using clips:',selected,flush=True)
-          PY
-          python3 /tmp/generate_h3_shots.py
-          cat generated/concat.txt
-      - name: Edit exact 10 second MP4
-        shell: bash
-        run: |
-          set -euo pipefail
-          ffmpeg -y -f concat -safe 0 -i generated/concat.txt -t 10 \
-            -c:v libx264 -preset fast -crf 20 -pix_fmt yuv420p \
-            -c:a aac -b:a 128k -movflags +faststart \
-            generated/gato_comendo_lasanha_ultrarealista_10s.mp4
-          file generated/gato_comendo_lasanha_ultrarealista_10s.mp4
+          mkdir -p generated
+          curl -L --fail --retry 3 --retry-delay 2 \
+            'https://rioshiina-ltx-2-5.hf.space/gradio_api/file=/tmp/gradio/bcce17c7a1a64128de2d3886240cbee4eb6d6dbb3c5c4173c5620445a82f4da8/LTX2.5_1788204895_t2v_00001_.mp4' \
+            -o generated/gato_comendo_lasanha_ultrarealista_10s.mp4
+          test -s generated/gato_comendo_lasanha_ultrarealista_10s.mp4
           ffprobe -v error -show_entries format=duration,size -of default=noprint_wrappers=1 generated/gato_comendo_lasanha_ultrarealista_10s.mp4
-      - name: Commit generated MP4
+
+      - name: Upload MP4 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gato-comendo-lasanha-ultrarealista-10s
+          path: generated/gato_comendo_lasanha_ultrarealista_10s.mp4
+          if-no-files-found: error
+
+      - name: Commit MP4
         shell: bash
         run: |
+          set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add generated/gato_comendo_lasanha_ultrarealista_10s.mp4
-          git commit -m 'Generate MiniMax H3 cat lasagna ultra realistic 10s'
-          git push
+          if git diff --cached --quiet; then
+            echo 'MP4 already stored.'
+          else
+            git commit -m 'Store LTX 2.5 cat lasagna ultra realistic 10s MP4'
+            git push
+          fi
