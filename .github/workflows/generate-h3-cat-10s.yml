@@ -12,117 +12,122 @@ permissions:
 jobs:
   generate:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - name: Generate directly with MiniMax H3
+      - name: Generate short MiniMax H3 shots
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p generated
-          cat > /tmp/generate_h3.py <<'PY'
-          import json, os, sys, urllib.request, urllib.parse
+          mkdir -p generated/clips
+          cat > /tmp/generate_h3_shots.py <<'PY'
+          import json, os, time, urllib.request, urllib.parse
 
-          BASE = 'https://multimodalart-minimax-h3.hf.space'
-          OUT = 'generated/gato_comendo_lasanha_ultrarealista_10s.mp4'
-          PROMPT = '''An ultra realistic orange long-haired cat in a warm rustic Italian kitchen sits at a wooden table with a freshly served plate of lasagna. Over 10 seconds, the cat behaves naturally and believably: it watches the food, leans in, smells the rising steam, gently places one paw beside the plate, takes a careful small bite of lasagna, chews with subtle realistic jaw motion, pauses, then licks its mouth and looks content. The lasagna is extremely detailed, with realistic pasta layers, rich tomato sauce, bubbling melted cheese, natural cheese stretch and visible steam. Natural feline behavior, anatomically correct cat, lifelike fur and whisker movement, believable eyes, consistent body proportions, stable subject identity, realistic physics, smooth motion continuity, warm golden practical lighting, authentic wooden textures, shallow depth of field, premium food cinematography, subtle slow camera dolly-in, documentary-level photorealism. Soundtrack: realistic cozy kitchen ambience, soft ceramic plate contact, subtle eating sounds and quiet purring. Vertical 9:16, 10 seconds, photorealistic, coherent motion, stable anatomy, no extra limbs, no deformation, no flickering, no text, no watermark.'''
+          BASE='https://multimodalart-minimax-h3.hf.space'
+          SEED=526831
+          COMMON='''An ultra realistic fluffy orange long-haired cat in the same warm rustic Italian kitchen, sitting at the same wooden table with the same freshly served ceramic plate of lasagna. Photorealistic natural feline anatomy, lifelike orange fur and whiskers, believable eyes, consistent body proportions, stable subject identity, realistic physics, warm golden practical lighting, authentic wooden textures, shallow depth of field, premium food cinematography, highly detailed pasta layers, rich tomato sauce, bubbling melted cheese and visible steam. Natural coherent movement, no extra limbs, no deformation, no flickering, no text, no watermark. Soundtrack: realistic cozy kitchen ambience, subtle ceramic plate sounds, soft eating sounds and quiet purring. Vertical 9:16.'''
+          ACTIONS=[
+            'Shot 1, medium close-up: the cat notices the lasagna, slowly leans forward and naturally sniffs the rising steam with curious subtle whisker movement. Slow cinematic camera push-in.',
+            'Shot 2, closer angle: the cat gently places one paw beside the plate and takes one careful small bite from the edge of the lasagna, moving naturally like a real cat.',
+            'Shot 3, premium food close-up: the cat takes another small bite while a short strand of melted cheese stretches naturally from the lasagna, detailed steam and sauce, realistic mouth movement.',
+            'Shot 4, intimate portrait angle: the cat chews subtly and calmly, blinks once, softly purrs, and looks satisfied while the steaming lasagna remains in the foreground.',
+            'Shot 5, final hero shot: the cat finishes eating, naturally licks its mouth once, looks content toward the plate and relaxes as the camera gently pushes closer.'
+          ]
 
-          def request_json(url, payload=None, timeout=60):
-              headers = {'accept':'application/json','user-agent':'Integrai-H3-Runner/1.0'}
-              data = None
-              method = 'GET'
-              if payload is not None:
-                  data = json.dumps(payload).encode('utf-8')
-                  headers['content-type'] = 'application/json'
-                  method = 'POST'
-              req = urllib.request.Request(url, data=data, headers=headers, method=method)
-              with urllib.request.urlopen(req, timeout=timeout) as r:
-                  return json.loads(r.read().decode('utf-8'))
+          def post_json(url,payload):
+              req=urllib.request.Request(url,data=json.dumps(payload).encode(),headers={'content-type':'application/json','accept':'application/json','user-agent':'Integrai-H3-Runner/2.0'},method='POST')
+              with urllib.request.urlopen(req,timeout=60) as r:return json.loads(r.read().decode())
 
           def find_video(v):
-              if not v: return ''
-              if isinstance(v, str):
-                  if v.startswith('http://') or v.startswith('https://'):
-                      if '.mp4' in v or '.webm' in v: return v
-                  if v.startswith('/gradio_api/file='): return BASE + v
-                  if v.startswith('/tmp/') and v.endswith('.mp4'): return BASE + '/gradio_api/file=' + v
-                  return ''
-              if isinstance(v, list):
+              if not v:return ''
+              if isinstance(v,str):
+                  if (v.startswith('https://') or v.startswith('http://')) and ('.mp4' in v or '.webm' in v):return v
+                  if v.startswith('/gradio_api/file='):return BASE+v
+                  if v.startswith('/tmp/') and v.endswith('.mp4'):return BASE+'/gradio_api/file='+v
+              elif isinstance(v,list):
                   for x in v:
-                      u = find_video(x)
-                      if u: return u
-              if isinstance(v, dict):
+                      u=find_video(x)
+                      if u:return u
+              elif isinstance(v,dict):
                   for k in ('url','path','video','value','data'):
                       if k in v:
-                          u = find_video(v[k])
-                          if u: return u
+                          u=find_video(v[k])
+                          if u:return u
                   for x in v.values():
-                      u = find_video(x)
-                      if u: return u
+                      u=find_video(x)
+                      if u:return u
               return ''
 
-          payload = {'data':[PROMPT, None, None, '544x960 · 9:16 fast', 10, 10, 526831, False]}
-          print('Submitting H3 request...', flush=True)
-          submit = request_json(BASE + '/gradio_api/call/generate', payload, 60)
-          event_id = submit.get('event_id')
-          if not event_id:
-              raise RuntimeError('No event_id: ' + repr(submit))
-          print('event_id:', event_id, flush=True)
+          def generate(action,index,deadline_seconds=240):
+              prompt=COMMON+' '+action+' Duration about 2 seconds, smooth coherent motion.'
+              payload={'data':[prompt,None,None,'544x960 · 9:16 fast',2,10,SEED,False]}
+              sub=post_json(BASE+'/gradio_api/call/generate',payload)
+              eid=sub.get('event_id')
+              if not eid:raise RuntimeError('no event_id '+repr(sub))
+              print(f'clip {index}: event_id {eid}',flush=True)
+              url=BASE+'/gradio_api/call/generate/'+urllib.parse.quote(str(eid),safe='')
+              req=urllib.request.Request(url,headers={'accept':'text/event-stream','user-agent':'Integrai-H3-Runner/2.0'})
+              start=time.monotonic(); ev=''; lines=[]; completed=None
+              with urllib.request.urlopen(req,timeout=60) as r:
+                  while True:
+                      if time.monotonic()-start>deadline_seconds:raise TimeoutError(f'clip {index} queue timeout')
+                      raw=r.readline()
+                      if not raw:break
+                      line=raw.decode('utf-8',errors='replace').rstrip('\r\n')
+                      if line=='':
+                          data='\n'.join(lines).strip()
+                          if ev=='error':raise RuntimeError(data)
+                          if ev=='complete':
+                              try:completed=json.loads(data)
+                              except:completed=data
+                              break
+                          ev='';lines=[];continue
+                      if line.startswith('event:'):ev=line[6:].strip()
+                      elif line.startswith('data:'):lines.append(line[5:].strip())
+              if completed is None:raise RuntimeError('stream ended without complete')
+              video=find_video(completed)
+              if not video:raise RuntimeError('video URL not found: '+repr(completed)[:500])
+              out=f'generated/clips/clip_{index}.mp4'
+              req2=urllib.request.Request(video,headers={'user-agent':'Integrai-H3-Runner/2.0'})
+              with urllib.request.urlopen(req2,timeout=120) as src,open(out,'wb') as dst:
+                  while True:
+                      chunk=src.read(1024*1024)
+                      if not chunk:break
+                      dst.write(chunk)
+              if os.path.getsize(out)<10000:raise RuntimeError('output too small')
+              print(f'clip {index}: saved {os.path.getsize(out)} bytes',flush=True)
+              return out
 
-          poll_url = BASE + '/gradio_api/call/generate/' + urllib.parse.quote(str(event_id), safe='')
-          req = urllib.request.Request(poll_url, headers={'accept':'text/event-stream','user-agent':'Integrai-H3-Runner/1.0'})
-          completed = None
-          current_event = ''
-          data_lines = []
-          with urllib.request.urlopen(req, timeout=600) as r:
-              while True:
-                  raw = r.readline()
-                  if not raw: break
-                  line = raw.decode('utf-8', errors='replace').rstrip('\r\n')
-                  if line == '':
-                      data_text = '\n'.join(data_lines).strip()
-                      if current_event:
-                          print('event:', current_event, flush=True)
-                      if current_event == 'error':
-                          raise RuntimeError('H3 error: ' + data_text)
-                      if current_event == 'complete':
-                          try: completed = json.loads(data_text)
-                          except Exception: completed = data_text
-                          break
-                      current_event = ''
-                      data_lines = []
-                      continue
-                  if line.startswith('event:'):
-                      current_event = line[6:].strip()
-                  elif line.startswith('data:'):
-                      data_lines.append(line[5:].strip())
+          clips=[]
+          for i,action in enumerate(ACTIONS,1):
+              try:clips.append(generate(action,i))
+              except Exception as e:print(f'clip {i} failed: {e}',flush=True)
 
-          if completed is None:
-              raise RuntimeError('SSE stream ended without complete event')
-          print('H3 complete:', json.dumps(completed, ensure_ascii=False)[:1200], flush=True)
-          video_url = find_video(completed)
-          if not video_url:
-              raise RuntimeError('Could not find video URL')
-          print('Downloading MP4:', video_url, flush=True)
-          req2 = urllib.request.Request(video_url, headers={'user-agent':'Integrai-H3-Runner/1.0'})
-          with urllib.request.urlopen(req2, timeout=120) as src, open(OUT, 'wb') as dst:
-              while True:
-                  chunk = src.read(1024*1024)
-                  if not chunk: break
-                  dst.write(chunk)
-          size = os.path.getsize(OUT)
-          if size < 10000:
-              raise RuntimeError(f'Output too small: {size}')
-          print('Saved', OUT, size, 'bytes', flush=True)
+          if not clips:raise RuntimeError('No H3 clips were generated')
+          selected=[]
+          while len(selected)<5:selected.extend(clips)
+          selected=selected[:5]
+          with open('generated/concat.txt','w') as f:
+              for p in selected:f.write("file '"+os.path.abspath(p).replace("'","'\\''")+"'\n")
+          print('Using clips:',selected,flush=True)
           PY
-          python3 /tmp/generate_h3.py
+          python3 /tmp/generate_h3_shots.py
+          cat generated/concat.txt
+      - name: Edit exact 10 second MP4
+        shell: bash
+        run: |
+          set -euo pipefail
+          ffmpeg -y -f concat -safe 0 -i generated/concat.txt -t 10 \
+            -c:v libx264 -preset fast -crf 20 -pix_fmt yuv420p \
+            -c:a aac -b:a 128k -movflags +faststart \
+            generated/gato_comendo_lasanha_ultrarealista_10s.mp4
           file generated/gato_comendo_lasanha_ultrarealista_10s.mp4
-          ffprobe -v error -show_entries format=duration,size -of default=noprint_wrappers=1 generated/gato_comendo_lasanha_ultrarealista_10s.mp4 || true
+          ffprobe -v error -show_entries format=duration,size -of default=noprint_wrappers=1 generated/gato_comendo_lasanha_ultrarealista_10s.mp4
       - name: Commit generated MP4
         shell: bash
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add generated/gato_comendo_lasanha_ultrarealista_10s.mp4
-          git commit -m 'Generate MiniMax H3 cat lasagna 10s'
+          git commit -m 'Generate MiniMax H3 cat lasagna ultra realistic 10s'
           git push
