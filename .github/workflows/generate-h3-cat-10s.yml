@@ -25,7 +25,7 @@ jobs:
             'https://rioshiina-ltx-2-5.hf.space/gradio_api/file=/tmp/gradio/bcce17c7a1a64128de2d3886240cbee4eb6d6dbb3c5c4173c5620445a82f4da8/LTX2.5_1788204895_t2v_00001_.mp4' \
             -o generated/gato_comendo_lasanha_ultrarealista_10s.mp4
           test -s generated/gato_comendo_lasanha_ultrarealista_10s.mp4
-          ffprobe -v error -show_entries format=duration,size -of default=noprint_wrappers=1 generated/gato_comendo_lasanha_ultrarealista_10s.mp4
+          ls -lh generated/gato_comendo_lasanha_ultrarealista_10s.mp4
 
       - name: Upload MP4 artifact
         uses: actions/upload-artifact@v4
