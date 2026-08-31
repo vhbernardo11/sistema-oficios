@@ -1,0 +1,45 @@
+name: Generate H3 Cat 10s
+
+on:
+  push:
+    paths:
+      - '.github/workflows/generate-h3-cat-10s.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate with MiniMax H3 through Supabase
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p generated
+          curl -L --fail --show-error --silent --max-time 180 \
+            'https://ghspaqawzfqtsxibgqxy.supabase.co/functions/v1/h3-cat-ultra-10s' \
+            -o response.json
+          cat response.json
+          URL="$(jq -r '.public_url // empty' response.json)"
+          OK="$(jq -r '.ok // false' response.json)"
+          if [ "$OK" != "true" ] || [ -z "$URL" ]; then
+            echo 'H3 generation failed' >&2
+            exit 1
+          fi
+          curl -L --fail --show-error --silent --max-time 60 "$URL" \
+            -o generated/gato_comendo_lasanha_ultrarealista_10s.mp4
+          test -s generated/gato_comendo_lasanha_ultrarealista_10s.mp4
+          file generated/gato_comendo_lasanha_ultrarealista_10s.mp4
+          ls -lh generated/gato_comendo_lasanha_ultrarealista_10s.mp4
+      - name: Commit generated MP4
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add generated/gato_comendo_lasanha_ultrarealista_10s.mp4
+          git commit -m 'Generate MiniMax H3 cat lasagna 10s'
+          git push
